@@ -85,29 +85,45 @@ DesktopPluginComponent {
     // Cover Art Local Download
     property string artFilePath: ""
     property bool artDownloaded: false
+    property int artCacheBuster: 0
 
-    onTrackArtUrlChanged: {
-        if (!trackArtUrl || trackArtUrl.length === 0) {
-            artDownloaded = false;
-            artFilePath = "";
+    function fetchCoverArt() {
+        coverArtDownloader.running = false;
+
+        if (!root.trackArtUrl || root.trackArtUrl.length === 0) {
+            root.artDownloaded = false;
+            root.artFilePath = "";
             return;
         }
-        if (trackArtUrl.startsWith("file://")) {
-            artFilePath = trackArtUrl;
-            artDownloaded = true;
+        if (root.trackArtUrl.startsWith("file://")) {
+            root.artCacheBuster++;
+            root.artFilePath = root.trackArtUrl + (root.trackArtUrl.includes("?") ? "&t=" : "?t=") + root.artCacheBuster;
+            root.artDownloaded = true;
             return;
         }
+
+        root.artDownloaded = false;
+        root.artFilePath = "";
+        let target = "/tmp/dms_cover_" + Qt.md5(root.trackArtUrl) + ".jpg";
+        coverArtDownloader.command = [
+            "bash", "-c",
+            "target=\"$1\"; url=\"$2\"; [ -s \"$target\" ] || { curl -fsSL \"$url\" -o \"$target.tmp.$$\" && mv \"$target.tmp.$$\" \"$target\" || rm -f \"$target.tmp.$$\"; }; [ -s \"$target\" ] && echo \"$target\"",
+            "bash", target, root.trackArtUrl
+        ];
         coverArtDownloader.running = true;
     }
 
+    onTrackArtUrlChanged: fetchCoverArt()
+
     Process {
         id: coverArtDownloader
-        command: ["bash", "-c", "target='/tmp/dms_cover_" + Qt.md5(root.trackArtUrl) + ".jpg'; [ -f \"$target\" ] || curl -sSL '" + root.trackArtUrl + "' -o \"$target\"; echo \"$target\""]
         running: false
         stdout: SplitParser {
             onRead: function(data) {
-                if (data.trim() !== "") {
-                    root.artFilePath = "file://" + data.trim();
+                let path = data.trim();
+                let expected = "/tmp/dms_cover_" + Qt.md5(root.trackArtUrl) + ".jpg";
+                if (path !== "" && path === expected) {
+                    root.artFilePath = "file://" + path;
                     root.artDownloaded = true;
                 }
             }
@@ -253,7 +269,10 @@ DesktopPluginComponent {
         lyricsProcess.running = true;
     }
 
-    onTrackTitleChanged: fetchLyrics()
+    onTrackTitleChanged: {
+        if (root.trackArtUrl.startsWith("file://")) fetchCoverArt();
+        fetchLyrics();
+    }
     onTrackArtistChanged: fetchLyrics()
 
     // ── Main Widget Card Container ──
@@ -320,6 +339,7 @@ DesktopPluginComponent {
                     Image {
                         anchors.fill: parent
                         source: root.artFilePath
+                        cache: false
                         fillMode: Image.PreserveAspectCrop
                         visible: root.artDownloaded && root.artFilePath !== ""
                     }
